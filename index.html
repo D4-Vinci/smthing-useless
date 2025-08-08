@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<title>Pour Mug — Gyro Demo</title>
+<style>
+  :root{--bg:#f6f7f9}
+  html,body{height:100%;margin:0;background:var(--bg);font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;}
+  #app{display:flex;flex-direction:column;height:100vh;align-items:center;justify-content:center;gap:12px;}
+  canvas{background:transparent;border-radius:12px;box-shadow:0 8px 30px rgba(20,30,50,0.08);}
+  .hud{font-size:14px;color:#1b2440;text-align:center;max-width:920px;}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;}
+  button{padding:8px 12px;border-radius:8px;border:1px solid rgba(27,36,64,0.08);background:white;cursor:pointer}
+  .hint{font-size:12px;color:#566;opacity:0.9}
+  .big{font-weight:600;font-size:16px}
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="c" width="820" height="560"></canvas>
+  <div class="hud">
+    <div class="big" id="status">Tilt your phone to pour — or hold mouse/touch + drag to simulate</div>
+    <div class="controls">
+      <button id="permBtn">Request Motion Permission (iOS)</button>
+      <button id="resetBtn">Reset Particles</button>
+      <div class="hint">Tilt threshold: <span id="thresholdLabel">25°</span> — tilt more to pour</div>
+    </div>
+    <div style="height:6px"></div>
+    <div class="hint">Export tip: Wrap this page in a WebView (Cordova / Capacitor) or PWA to make APK. On Android the DeviceMotion API works without extra permissions. On iOS you must call permission API.</div>
+  </div>
+</div>
+
+<script>
+/*
+  pour_mug.html
+  - canvas-based mug + beer + foam
+  - uses DeviceOrientation/DeviceMotion if available
+  - desktop simulation: hold mouse/touch and drag to set "fake" accel
+*/
+
+// CONFIG
+const POUR_THRESHOLD_DEGREES = 25; // tilt threshold to begin pouring
+const SPAWN_RATE = 140;            // particles per second (when pouring)
+const PARTICLE_LIFE = 1.1;         // seconds
+const PARTICLE_SPEED = 720;        // base speed px/sec
+const PARTICLE_SIZE = 5.5;
+const MAX_PARTICLES = 1400;
+
+// canvas setup
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W = canvas.width, H = canvas.height;
+
+// translate origin to center for convenience
+const center = () => ({x: W/2, y: H/2 + 20}); // slight lower center
+
+// particle arrays
+const beerParticles = [];
+const foamParticles = [];
+let spawnAcc = 0;
+
+// state for sensor & simulation
+let accel = {x: 0, y: 0, z: -9.8}; // gravity vector (m/s^2), default pointing into screen
+let accelSmoothed = {...accel};
+const SMOOTH = 0.12;
+let simulate = true; // allow mouse simulation
+let mouseVel = {x:0, y:0};
+let lastMouse = null;
+let isPointerDown = false;
+
+// mug geometry (relative coords around origin)
+const MUG = {
+  width: 320,
+  height: 360,
+  thickness: 18,
+  handleR: 62,
+  spout: {x: 0.43, y: -0.36} // relative factors from previous GDScript design (we'll scale)
+};
+
+// rotation angle (radians) applied to mug so mouth points opposite gravity
+let angle = 0;
+
+// helpers
+function rand(min, max){ return min + Math.random()*(max-min); }
+
+// device sensor handling
+function handleDeviceMotion(e){
+  // prefer accelerationIncludingGravity if available
+  const a = e.accelerationIncludingGravity || e.acceleration || {x:0,y:0,z:0};
+  // Note: axes orientation vary by device; we map them similar to Godot: x=left-right, y=front-back
+  accel.x = a.x || 0;
+  accel.y = a.y || 0;
+  accel.z = (a.z !== undefined) ? a.z : accel.z;
+}
+
+function handleDeviceOrientation(e){
+  // fallback to orientation angles (degrees) if motion not available.
+  // Use beta (front-back) and gamma (left-right) to synthesize gravity direction.
+  if(e.beta === null || e.gamma === null) return;
+  // convert tilt to an approximate 2D gravity: treat device flat orientation as z=-9.8
+  const beta = e.beta * Math.PI/180;   // front-back
+  const gamma = e.gamma * Math.PI/180; // left-right
+  // simple model: gravity vector in device coords:
+  accel.x = Math.sin(gamma) * 9.8;
+  accel.y = Math.sin(beta) * 9.8;
+  accel.z = Math.cos(beta) * Math.cos(gamma) * -9.8;
+}
+
+// permission request (iOS)
+const permBtn = document.getElementById('permBtn');
+permBtn.addEventListener('click', async ()=>{
+  permBtn.disabled = true;
+  if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+    try {
+      const resp = await DeviceMotionEvent.requestPermission();
+      if (resp === 'granted') {
+        window.addEventListener('devicemotion', handleDeviceMotion);
+        document.getElementById('status').textContent = 'Motion permission granted — tilt to pour';
+      } else {
+        document.getElementById('status').textContent = 'Permission denied';
+      }
+    } catch(err){
+      console.warn('perm err', err);
+      document.getElementById('status').textContent = 'Permission request failed';
+    }
+  } else if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+    // some iOS may require DeviceOrientation permission
+    try {
+      const resp = await DeviceOrientationEvent.requestPermission();
+      if (resp === 'granted') {
+        window.addEventListener('deviceorientation', handleDeviceOrientation);
+        document.getElementById('status').textContent = 'Orientation permission granted — tilt to pour';
+      } else {
+        document.getElementById('status').textContent = 'Permission denied';
+      }
+    } catch(err){
+      console.warn(err);
+      document.getElementById('status').textContent = 'Permission request failed';
+    }
+  } else {
+    // no special permission required on many Android browsers
+    window.addEventListener('devicemotion', handleDeviceMotion);
+    window.addEventListener('deviceorientation', handleDeviceOrientation);
+    document.getElementById('status').textContent = 'Listening for sensors (if available)';
+  }
+});
+
+// attach general listeners (try to enable sensors by default on supporting browsers)
+if(!('ontouchstart' in window)){
+  // many desktops don't provide sensors; keep simulation on
+}
+window.addEventListener('devicemotion', handleDeviceMotion, true);
+window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+
+// pointer (mouse/touch) simulation
+function onPointerDown(e){
+  isPointerDown = true;
+  lastMouse = getPointerPos(e);
+  mouseVel.x = 0; mouseVel.y = 0;
+}
+function onPointerMove(e){
+  if(!isPointerDown) return;
+  const p = getPointerPos(e);
+  const dx = p.x - lastMouse.x;
+  const dy = p.y - lastMouse.y;
+  mouseVel.x = dx; mouseVel.y = dy;
+  lastMouse = p;
+}
+function onPointerUp(e){
+  isPointerDown = false;
+  lastMouse = null;
+  mouseVel.x = mouseVel.y = 0;
+}
+function getPointerPos(e){
+  if(e.touches && e.touches[0]) return {x: e.touches[0].clientX, y: e.touches[0].clientY};
+  return {x: e.clientX, y: e.clientY};
+}
+canvas.addEventListener('pointerdown', onPointerDown);
+window.addEventListener('pointermove', onPointerMove);
+window.addEventListener('pointerup', onPointerUp);
+canvas.addEventListener('touchstart', onPointerDown, {passive:true});
+canvas.addEventListener('touchmove', onPointerMove, {passive:true});
+canvas.addEventListener('touchend', onPointerUp, {passive:true});
+
+// resizing
+function resize(){
+  // keep canvas crisp on high DPI
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.round((rect.width || 820) * dpr);
+  canvas.height = Math.round((rect.height || 560) * dpr);
+  // Set CSS size if not already
+  if(!rect.width){
+    canvas.style.width = '820px';
+    canvas.style.height = '560px';
+    canvas.width = 820 * dpr;
+    canvas.height = 560 * dpr;
+  }
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  W = canvas.width / dpr;
+  H = canvas.height / dpr;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// compute tilt angle in degrees for UI & pouring decision
+function computeTiltDegrees(a){
+  // project gravity into 2D using x,y like earlier
+  const gx = a.x, gy = a.y;
+  if(Math.hypot(gx, gy) < 0.001) return 0;
+  const ang = Math.atan2(gy, gx); // radians
+  return ang * 180 / Math.PI;
+}
+
+// map accel to rotation angle: rotate mug so mouth opposes gravity
+function accelToRotation(a){
+  const gx = a.x, gy = a.y;
+  if(Math.hypot(gx, gy) < 0.001) return 0;
+  // rotate so mug mouth points opposite gravity: atan2(-gx, -gy)
+  return Math.atan2(-gx, -gy);
+}
+
+// compute the global position of spout given center and rotation
+function mugSpoutPos(cx, cy, rot){
+  const mw = MUG.width, mh = MUG.height;
+  const local = {x: mw * MUG.spout.x - mw/2, y: -mh * 0.36 + mh/2 - mh/2}; // we'll build simpler: center-based
+  // better: use same relative as GDScript: local_spout := Vector2(MUG_WIDTH * 0.43, -MUG_HEIGHT * 0.36)
+  const lx = mw * 0.43 - mw/2;
+  const ly = -mh * 0.36 + mh/2 - mh/2; // essentially -mh*0.36 from center
+  // actually simpler: compute from center coordinates:
+  const localX = mw * 0.43;
+  const localY = -mh * 0.36;
+  // rotate local vector by rot
+  const rx = Math.cos(rot)*localX - Math.sin(rot)*localY;
+  const ry = Math.sin(rot)*localX + Math.cos(rot)*localY;
+  return {x: cx + rx, y: cy + ry};
+}
+
+// spawn particles when pouring
+function spawnParticles(dt, intensity){
+  spawnAcc += SPAWN_RATE * intensity * dt;
+  let toSpawn = Math.floor(spawnAcc);
+  spawnAcc -= toSpawn;
+  toSpawn = Math.min(toSpawn, MAX_PARTICLES - beerParticles.length);
+  if(toSpawn <= 0) return;
+  // compute spout pos in global coords
+  const c = center();
+  const sp = mugSpoutPos(c.x, c.y, angle);
+  for(let i=0;i<toSpawn;i++){
+    const p = {
+      x: sp.x + rand(-6,6),
+      y: sp.y + rand(-6,6),
+      vx: 0, vy: 0,
+      life: PARTICLE_LIFE * rand(0.8,1.6),
+      size: PARTICLE_SIZE * rand(0.6,1.4),
+      color: `rgba(${Math.floor(rand(220,245))},${Math.floor(rand(150,165))},${Math.floor(rand(30,60))},1)`
+    };
+    // direction opposite gravity in 2D
+    let gx = accelSmoothed.x, gy = accelSmoothed.y;
+    let dirx=0, diry=-1;
+    const gmag = Math.hypot(gx, gy);
+    if(gmag > 0.01){
+      dirx = -gx/gmag; diry = -gy/gmag;
+    }
+    const spread = rand(-0.4,0.4);
+    const cs = Math.cos(spread), sn = Math.sin(spread);
+    const dx = dirx*cs - diry*sn;
+    const dy = dirx*sn + diry*cs;
+    const speed = PARTICLE_SPEED * rand(0.6,1.4) * intensity;
+    p.vx = dx * speed;
+    p.vy = dy * speed;
+    beerParticles.push(p);
+
+    // spawn foam sometimes
+    if(Math.random() < 0.35){
+      const f = {
+        x: p.x + rand(-4,4), y: p.y + rand(-4,4),
+        vx: p.vx*0.25 + rand(-30,30), vy: p.vy*0.25 + rand(-30,30),
+        life: 0.25 + Math.random()*0.6,
+        size: 3 + Math.random()*3,
+        color: `rgba(255,255,255,1)`
+      };
+      foamParticles.push(f);
+    }
+  }
+}
+
+// physics update
+function updateParticles(dt){
+  // integrate using device gravity as a force so they "feel" device gravity
+  const gravityScale = 60; // tweak for visual feel
+  const gx = accelSmoothed.x * gravityScale;
+  const gy = accelSmoothed.y * gravityScale;
+
+  for(let i=beerParticles.length-1;i>=0;i--){
+    const p = beerParticles[i];
+    p.vx += gx * dt;
+    p.vy += gy * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.life -= dt;
+    if(p.life <= 0) beerParticles.splice(i,1);
+  }
+  for(let i=foamParticles.length-1;i>=0;i--){
+    const f = foamParticles[i];
+    f.vx += gx * dt * 0.5;
+    f.vy += gy * dt * 0.5;
+    f.x += f.vx * dt;
+    f.y += f.vy * dt;
+    f.life -= dt;
+    if(f.life <= 0) foamParticles.splice(i,1);
+  }
+  // cap arrays
+  if(beerParticles.length > MAX_PARTICLES) beerParticles.splice(0, beerParticles.length - MAX_PARTICLES);
+}
+
+// drawing mug procedurally
+function drawMug(ctx, cx, cy, rot){
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(rot);
+  // sizes
+  const mw = MUG.width, mh = MUG.height, mt = MUG.thickness;
+  // body rect: center-aligned
+  const bodyX = -mw/2, bodyY = -mh/2;
+  // outer rim (stroke)
+  ctx.lineWidth = mt;
+  ctx.strokeStyle = '#EFEFEF';
+  ctx.strokeRect(bodyX, bodyY, mw, mh);
+  // inner fill
+  ctx.fillStyle = '#FFF';
+  ctx.fillRect(bodyX + mt*0.5, bodyY + mt*0.5, mw - mt, mh - mt);
+
+  // top rim ellipse (shadow)
+  ctx.beginPath();
+  ctx.ellipse(0, -mh/2 + 14, mw*0.38, 12, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#EAEAEA';
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.ellipse(0, -mh/2 + 14, mw*0.36, 9, 0, 0, Math.PI*2);
+  ctx.strokeStyle = '#D8D8D8';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // handle: two circles to make ring
+  const hx = mw*0.55, hy = -mh*0.06;
+  ctx.beginPath();
+  ctx.fillStyle = '#F6F6F6';
+  ctx.arc(hx, hy, MUG.handleR, 0, Math.PI*2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.fillStyle = '#FFF';
+  ctx.arc(hx, hy, MUG.handleR - 12, 0, Math.PI*2);
+  ctx.fill();
+
+  // tiny spout dot
+  const spx = mw*0.43, spy = -mh*0.36;
+  ctx.beginPath();
+  ctx.arc(spx, spy, 6, 0, Math.PI*2);
+  ctx.fillStyle = '#DFAE00';
+  ctx.fill();
+
+  // beer fill ellipse inside
+  ctx.beginPath();
+  ctx.ellipse(0, -mh*0.2, mw*0.34, 8, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#E29E2A';
+  ctx.fill();
+
+  // shadow
+  ctx.beginPath();
+  ctx.ellipse(0, mh*0.52, mw*0.46, 18, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(0,0,0,0.12)';
+  ctx.fill();
+
+  ctx.restore();
+}
+
+// draw loop
+let last = performance.now();
+function loop(now){
+  const dt = Math.min(0.05, (now - last)/1000);
+  last = now;
+
+  // desktop simulation: mouseVel feeds accel when isPointerDown
+  if(simulate){
+    if(isPointerDown){
+      // map mouseVel to pseudo-accel. Flip sign to match device feel.
+      accel.x = -mouseVel.x * 0.05;
+      accel.y = -mouseVel.y * 0.05;
+      accel.z = -9.8;
+      // damp velocity a little
+      mouseVel.x *= 0.86; mouseVel.y *= 0.86;
+    }
+  }
+
+  // smooth accel
+  accelSmoothed.x += (accel.x - accelSmoothed.x) * Math.min(1, SMOOTH * (1/dt));
+  accelSmoothed.y += (accel.y - accelSmoothed.y) * Math.min(1, SMOOTH * (1/dt));
+  accelSmoothed.z += (accel.z - accelSmoothed.z) * Math.min(1, SMOOTH * (1/dt));
+
+  // compute tilt & pouring
+  const tiltDeg = computeTiltDegrees(accelSmoothed);
+  const pouring = Math.abs(tiltDeg) > POUR_THRESHOLD_DEGREES;
+
+  // rotation
+  angle = accelToRotation(accelSmoothed);
+
+  // spawn if pouring
+  if(pouring){
+    const intensity = Math.min(1.6, Math.max(0.1, (Math.abs(tiltDeg) - POUR_THRESHOLD_DEGREES)/60));
+    spawnParticles(dt, intensity);
+  } else {
+    spawnAcc = 0;
+  }
+
+  updateParticles(dt);
+
+  // draw
+  ctx.clearRect(0,0,W,H);
+  const c = center();
+
+  // draw beer particles (they're in global coords)
+  // draw behind mug (so mug is in front)
+  for(const p of beerParticles){
+    ctx.beginPath();
+    ctx.fillStyle = p.color.replace(/,1\)$/, `,${Math.max(0.08, p.life / PARTICLE_LIFE).toFixed(3)})`);
+    ctx.arc(p.x, p.y, Math.max(1.2, p.size * Math.max(0.2,p.life / PARTICLE_LIFE)), 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // draw foam particles slightly above beer (smaller white blobs)
+  for(const f of foamParticles){
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${Math.max(0.05, f.life/0.8)})`;
+    ctx.arc(f.x, f.y, Math.max(1, f.size * (f.life / 0.8)), 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // draw mug on top
+  drawMug(ctx, c.x, c.y, angle);
+
+  // HUD overlay
+  ctx.fillStyle = '#1b2440';
+  ctx.font = '14px system-ui, -apple-system, Roboto, Arial';
+  const statusEl = document.getElementById('status');
+  statusEl.textContent = `Tilt angle: ${tiltDeg.toFixed(1)}° — ${pouring ? 'POURING' : 'steady' } — Hold mouse/touch + drag to simulate.`;
+
+  // label
+  ctx.font = '12px system-ui';
+  ctx.fillStyle = '#344';
+  ctx.fillText(`Tilt > ${POUR_THRESHOLD_DEGREES}° to pour. Particles: ${beerParticles.length}`, 12, 18);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// reset button
+document.getElementById('resetBtn').addEventListener('click', ()=>{ beerParticles.length=0; foamParticles.length=0; });
+
+// initialize small canvas size in CSS pixels (so it looks good)
+canvas.style.width = '820px';
+canvas.style.height = '560px';
+resize();
+
+</script>
+</body>
+</html>
+
