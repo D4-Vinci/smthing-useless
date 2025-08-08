@@ -1,15 +1,36 @@
-[gd_scene load_steps=4 format=3 uid="uid://liuyp6vksgkb"]
+[gd_scene load_steps=5 format=3 uid="uid://liuyp6vksgkb"]
 
+[ext_resource type="Script" uid="uid://dmsmpwra1kdum" path="res://booze.gd" id="1_0xm2m"]
 [ext_resource type="Texture2D" uid="uid://bbmd0sum8ow78" path="res://Mug of Beer.png" id="1_ig7tw"]
-
-[sub_resource type="RectangleShape2D" id="RectangleShape2D_0xm2m"]
-size = Vector2(23, 28)
 
 [sub_resource type="Curve" id="Curve_ig7tw"]
 _data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.363636, 0.820225), 0.0, 0.0, 0, 0, Vector2(0.602273, 1), 0.0, 0.0, 0, 0, Vector2(0.795455, 0.52809), 0.0, 0.0, 0, 0, Vector2(0.943182, 0.280899), 0.0, 0.0, 0, 0]
 point_count = 5
 
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_0xm2m"]
+size = Vector2(23, 28)
+
 [node name="Node2D" type="Node2D"]
+
+[node name="Booze" type="Node" parent="."]
+script = ExtResource("1_0xm2m")
+
+[node name="Camera2D" type="Camera2D" parent="Booze"]
+position = Vector2(84, 126)
+zoom = Vector2(5, 5)
+
+[node name="CPUParticles2D" type="CPUParticles2D" parent="Booze"]
+position = Vector2(84, 154)
+preprocess = 7.05
+speed_scale = 1.65
+explosiveness = 0.33
+randomness = 1.0
+lifetime_randomness = 0.26
+gravity = Vector2(73, -1000)
+scale_amount_min = 0.0
+scale_amount_max = 10.0
+scale_amount_curve = SubResource("Curve_ig7tw")
+color = Color(0.497037, 0.410845, 0.148799, 1)
 
 [node name="CharacterBody2D" type="CharacterBody2D" parent="."]
 position = Vector2(85, 165)
@@ -20,16 +41,3 @@ texture = ExtResource("1_ig7tw")
 [node name="CollisionShape2D" type="CollisionShape2D" parent="CharacterBody2D"]
 position = Vector2(1, 1)
 shape = SubResource("RectangleShape2D_0xm2m")
-
-[node name="CPUParticles2D" type="CPUParticles2D" parent="CharacterBody2D"]
-position = Vector2(-1, -11)
-preprocess = 7.05
-speed_scale = 1.65
-explosiveness = 0.33
-randomness = 1.0
-lifetime_randomness = 0.26
-gravity = Vector2(0, -1000)
-scale_amount_min = 0.0
-scale_amount_max = 10.0
-scale_amount_curve = SubResource("Curve_ig7tw")
-color = Color(0.497037, 0.410845, 0.148799, 1)
