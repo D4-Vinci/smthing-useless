@@ -1,4 +1,4 @@
-extends Node2D
+extends Booze
 
 @onready var particles = $CPUParticles2D
 
