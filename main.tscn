@@ -1,3 +1,20 @@
-[gd_scene format=3 uid="uid://liuyp6vksgkb"]
+[gd_scene load_steps=3 format=3 uid="uid://liuyp6vksgkb"]
+
+[ext_resource type="Texture2D" uid="uid://bbmd0sum8ow78" path="res://Mug of Beer.png" id="1_ig7tw"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_0xm2m"]
+size = Vector2(23, 28)
 
 [node name="Node2D" type="Node2D"]
+
+[node name="CharacterBody2D" type="CharacterBody2D" parent="."]
+position = Vector2(85, 165)
+
+[node name="Sprite2D" type="Sprite2D" parent="CharacterBody2D"]
+texture = ExtResource("1_ig7tw")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="CharacterBody2D"]
+position = Vector2(1, 1)
+shape = SubResource("RectangleShape2D_0xm2m")
+
+[node name="CPUParticles2D" type="CPUParticles2D" parent="CharacterBody2D"]
