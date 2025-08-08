@@ -1,11 +1,21 @@
-extends Node
+extends Node2D
 
+@onready var particles = $CPUParticles2D
+
+# Threshold in degrees before jug starts pouring
+var tilt_threshold = 25.0  
 
 func _ready():
-	pass
-
-
+	particles.emitting = false
 
 func _process(delta):
-	if Input.is_action_just_pressed("ui_accept"):
-		CPUParticles2D.emitting = !$CPUParticles2D.emitting
+	var accel = Input.get_accelerometer()  
+	# accel.x = left/right tilt, accel.y = forward/back tilt
+	# We can map x tilt to jug rotation
+	rotation_degrees = clamp(accel.x * 90.0, -90, 90)
+
+	# Check tilt magnitude
+	if abs(rotation_degrees) > tilt_threshold:
+		particles.emitting = true
+	else:
+		particles.emitting = false

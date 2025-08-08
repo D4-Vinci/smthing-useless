@@ -1,0 +1,8 @@
+[gd_scene load_steps=2 format=3 uid="uid://ewh1gtbtaile"]
+
+[ext_resource type="Script" uid="uid://boyvgfxa2s3nh" path="res://touch_control/scene/touch_screen_button.gd" id="1_to1uo"]
+
+[node name="CanvasLayer" type="CanvasLayer"]
+
+[node name="TouchScreenButton" type="TouchScreenButton" parent="."]
+script = ExtResource("1_to1uo")

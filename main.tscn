@@ -1,7 +1,8 @@
-[gd_scene load_steps=5 format=3 uid="uid://liuyp6vksgkb"]
+[gd_scene load_steps=6 format=3 uid="uid://liuyp6vksgkb"]
 
 [ext_resource type="Script" uid="uid://dmsmpwra1kdum" path="res://booze.gd" id="1_0xm2m"]
 [ext_resource type="Texture2D" uid="uid://bbmd0sum8ow78" path="res://Mug of Beer.png" id="1_ig7tw"]
+[ext_resource type="PackedScene" uid="uid://ewh1gtbtaile" path="res://touch_control/scene/canvas_layer.tscn" id="3_h2yge"]
 
 [sub_resource type="Curve" id="Curve_ig7tw"]
 _data = [Vector2(0, 1), 0.0, 0.0, 0, 0, Vector2(0.363636, 0.820225), 0.0, 0.0, 0, 0, Vector2(0.602273, 1), 0.0, 0.0, 0, 0, Vector2(0.795455, 0.52809), 0.0, 0.0, 0, 0, Vector2(0.943182, 0.280899), 0.0, 0.0, 0, 0]
@@ -43,3 +44,11 @@ texture = ExtResource("1_ig7tw")
 [node name="CollisionShape2D" type="CollisionShape2D" parent="CharacterBody2D"]
 position = Vector2(1, 1)
 shape = SubResource("RectangleShape2D_0xm2m")
+
+[node name="Control" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 40.0
+offset_bottom = 40.0
+
+[node name="CanvasLayer" parent="Control" instance=ExtResource("3_h2yge")]
